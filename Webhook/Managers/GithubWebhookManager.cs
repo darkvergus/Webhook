@@ -7,9 +7,9 @@ namespace Webhook.Managers;
 public class GithubWebhookManager : IGithubWebhookManager
 {
     private const string Sha1Prefix = "sha1=";
-    private readonly string githubWebhookSecret;
+    private readonly IConfiguration configuration;
 
-    public GithubWebhookManager(IConfiguration configuration) => githubWebhookSecret = configuration["GitHubWebhookSecret"];
+    public GithubWebhookManager(IConfiguration configuration) => this.configuration = configuration;
 
     public bool IsGitHubSignatureValid(string payload, string eventName, string signatureWithPrefix)
     {
@@ -38,8 +38,8 @@ public class GithubWebhookManager : IGithubWebhookManager
             return false;
         }
 
-        string signature = signatureWithPrefix.Substring(Sha1Prefix.Length);
-        byte[] secret = Encoding.ASCII.GetBytes(githubWebhookSecret);
+        string signature = signatureWithPrefix[Sha1Prefix.Length..];
+        byte[] secret = Encoding.ASCII.GetBytes(configuration["GitHubWebhookSecret"]);
         byte[] payloadBytes = Encoding.UTF8.GetBytes(payload);
 
         using HMACSHA1 hmSha1 = new(secret);
@@ -88,5 +88,65 @@ public class GithubWebhookManager : IGithubWebhookManager
         }
 
         process.WaitForExit();
+    }
+
+    public bool CheckDb()
+    {
+        bool dropDb = false;
+        string sqlpath = configuration["MapleServer2"] + "\\Database";
+        string[] files = Directory.GetFileSystemEntries(sqlpath, "*.sql", SearchOption.AllDirectories);
+        foreach (string file in files)
+        {
+            if (HasValidHash(file))
+            {
+                Console.WriteLine($"\rSkipping {file}");
+                continue;
+            }
+
+            dropDb = true;
+            WriteHash(file);
+        }
+
+        return dropDb;
+    }
+
+    private bool HasValidHash(string file)
+    {
+        string fileName = Path.GetFileName(file);
+        string hashPath = AppContext.BaseDirectory + $"Hashes/{fileName}-hash";
+
+        if (!File.Exists(hashPath))
+        {
+            return false;
+        }
+
+        string currentHash = File.ReadAllText(hashPath);
+        string newHash = GetHash(file);
+
+        return currentHash.Equals(newHash);
+    }
+
+    private void WriteHash(string file)
+    {
+        string fileName = Path.GetFileName(file);
+        string hashPath = AppContext.BaseDirectory + $"Hashes/{fileName}-hash";
+
+        string newHash = GetHash(file);
+
+        File.WriteAllText(hashPath, newHash);
+    }
+
+    private string GetHash(string file)
+    {
+        if (!File.Exists(file))
+        {
+            return string.Empty;
+        }
+
+        using MD5 md5 = MD5.Create();
+        using FileStream stream = File.OpenRead(file);
+
+        byte[] hash = md5.ComputeHash(stream);
+        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
     }
 }

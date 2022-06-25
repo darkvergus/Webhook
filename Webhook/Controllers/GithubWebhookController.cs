@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
+using MySql.Data.MySqlClient;
 using Webhook.Managers;
 
 namespace Webhook.Controllers;
@@ -9,17 +10,14 @@ namespace Webhook.Controllers;
 public class GithubWebhookController : Controller
 {
     private readonly ILogger<GithubWebhookController> logger;
-    private readonly string repo;
-    private readonly string mapleServer2;
-    private readonly string mapleWebServer;
     private readonly IGithubWebhookManager igithubWebhookManager;
+    private readonly IConfiguration configuration;
 
     public GithubWebhookController(ILogger<GithubWebhookController> logger, IConfiguration configuration, IGithubWebhookManager igithubWebhookManager)
     {
         this.logger = logger;
-        repo = configuration["Repo"];
-        mapleServer2 = configuration["MapleServer2"];
-        mapleWebServer = configuration["MapleWebServer"];
+        this.configuration = configuration;
+
         this.igithubWebhookManager = igithubWebhookManager;
     }
 
@@ -47,6 +45,7 @@ public class GithubWebhookController : Controller
         }
 
         List<string> commands = new();
+
         if (Process.GetProcessesByName("Mapleserver2").Length > 0)
         {
             commands.Add("taskkill /f /im mapleserver2.exe");
@@ -57,8 +56,22 @@ public class GithubWebhookController : Controller
             commands.Add("taskkill /f /im maplewebserver.exe");
         }
 
+        string repo = configuration["Repo"];
+        string mapleServer2 = configuration["MapleServer2"];
+        string mapleWebServer = configuration["MapleWebServer"];
+        string dbUser = configuration["dbUser"];
+        string dbPass = configuration["dbPass"];
+        string dbName = configuration["dbName"];
+
         commands.Add("cd " + repo + " && git fetch upstream");
         commands.Add("git pull upstream master");
+
+        if (igithubWebhookManager.CheckDb())
+        {
+            MySqlConnection conn = new($"SERVER=localhost;PORT=3306;USER={dbUser};PASSWORD={dbPass};DATABASE={dbName};");
+            await new MySqlScript(conn, "DROP DATABASE IF EXISTS " + dbName).ExecuteAsync();
+        }
+
         commands.Add("dotnet run --project gamedataparser/gamedataparser.csproj");
         commands.Add("cd " + mapleServer2 + " && dotnet build --configuration Release");
         commands.Add("cd " + mapleWebServer + " && dotnet build --configuration Release");
